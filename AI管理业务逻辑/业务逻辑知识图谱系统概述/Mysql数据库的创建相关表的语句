@@ -1,0 +1,85 @@
+-- 设置字符集和排序规则
+SET NAMES utf8mb4;
+SET CHARACTER SET utf8mb4;
+SET character_set_connection = utf8mb4;
+
+-- 创建数据库（可选）
+CREATE DATABASE IF NOT EXISTS business_logic_kg CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE business_logic_kg;
+
+-- 表1: business_logic - 业务逻辑主表
+CREATE TABLE business_logic (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL COMMENT '逻辑标题，如“订单超时自动取消”',
+    category VARCHAR(50) DEFAULT 'uncategorized' COMMENT '分类：订单、用户、支付等',
+    status ENUM('active', 'deprecated', 'draft') DEFAULT 'active' COMMENT '当前状态',
+    current_version_id BIGINT COMMENT '指向 logic_version 表中最新版本的 id',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_title (title),
+    INDEX idx_category (category),
+    INDEX idx_status (status),
+    INDEX idx_current_version_id (current_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务逻辑主表';
+
+-- 表2: logic_version - 业务逻辑版本历史
+CREATE TABLE logic_version (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    logic_id BIGINT NOT NULL COMMENT '外键，关联 business_logic.id',
+    version_number INT NOT NULL DEFAULT 1 COMMENT '版本号，从1开始递增',
+    content LONGTEXT NOT NULL COMMENT '详细业务逻辑描述，支持 Markdown',
+    data_model_schema JSON COMMENT '关联的数据模型（JSON格式，如字段、类型、约束）',
+    changed_by VARCHAR(100) NOT NULL COMMENT '修改人（姓名或账号）',
+    change_reason TEXT COMMENT '修改原因，如“修复并发问题”',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 唯一约束：每个 logic_id 的 version_number 不能重复
+    UNIQUE KEY uk_logic_version (logic_id, version_number),
+    
+    FOREIGN KEY (logic_id) REFERENCES business_logic(id) ON DELETE CASCADE,
+    INDEX idx_logic_id (logic_id),
+    INDEX idx_version_number (version_number),
+    INDEX idx_changed_by (changed_by),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务逻辑版本历史表';
+
+-- 更新 business_logic 的 current_version_id 外键约束（在 logic_version 创建后）
+ALTER TABLE business_logic
+ADD CONSTRAINT fk_current_version
+FOREIGN KEY (current_version_id) REFERENCES logic_version(id)
+ON DELETE SET NULL;
+
+-- 表3: keywords - 关键词字典表
+CREATE TABLE keywords (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    keyword VARCHAR(50) NOT NULL UNIQUE COMMENT '关键词，如“超时”、“退款”、“库存锁定”',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_keyword (keyword)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='关键词字典表';
+
+-- 表4: logic_keywords - 业务逻辑与关键词的多对多关联
+CREATE TABLE logic_keywords (
+    logic_version_id BIGINT NOT NULL COMMENT '逻辑版本ID',
+    keyword_id BIGINT NOT NULL COMMENT '关键词ID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    PRIMARY KEY (logic_version_id, keyword_id),
+    
+    FOREIGN KEY (logic_version_id) REFERENCES logic_version(id) ON DELETE CASCADE,
+    FOREIGN KEY (keyword_id) REFERENCES keywords(id) ON DELETE CASCADE,
+    
+    INDEX idx_keyword_id (keyword_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务逻辑与关键词多对多关联表';
+
+-- 表5: ai_generated_log - AI 操作日志（用于审计和追溯）
+CREATE TABLE ai_generated_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    prompt TEXT NOT NULL COMMENT '用户输入的查询或指令',
+    response LONGTEXT NOT NULL COMMENT 'AI 返回的内容',
+    source_logic_ids JSON COMMENT '引用的逻辑条目ID列表，如 [1, 5, 8]',
+    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_generated_at (generated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 生成内容日志表';
